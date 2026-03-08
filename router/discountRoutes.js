@@ -28,7 +28,7 @@ const { protect, allowedTo } = require("../services/authServices");
 router.put(
   "/applyCoupon",
   protect,
-  allowedTo("user", "admin"),
+  allowedTo("user"),
   applyCouponValidator,
   applyCouponToCart,
 );
