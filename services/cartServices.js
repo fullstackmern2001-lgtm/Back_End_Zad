@@ -1,29 +1,20 @@
 const asyncHandler = require("express-async-handler");
-
 const Cart = require("../models/cartModel");
 const Product = require("../models/productModel");
 const ApiError = require("../utils/ApiError");
 const calcTotalCartPrice = require("../utils/calcTotalCartPrice");
 
-// @desc      Add product to cart
-// @route     POST /api/v1/cart
-// @access    Private/User
+// ==================== Add Product to Cart ====================
 exports.addProductsToCart = asyncHandler(async (req, res, next) => {
   const { productId, color, size } = req.body;
 
-  // ✅ اجلب بيانات المنتج من قاعدة البيانات
   const product = await Product.findById(productId);
-  if (!product) {
-    return next(new ApiError("Product not found", 404));
-  }
+  if (!product) return next(new ApiError("Product not found", 404));
 
-  const cart = await Cart.findOne({ user: req.user._id }).populate({
-    path: "cartItems.product",
-    select: "name image price",
-  });
+  let cart = await Cart.findOne({ user: req.user._id });
 
   if (!cart) {
-    // ✅ أنشئ سلة جديدة
+    // Create new cart
     cart = await Cart.create({
       user: req.user._id,
       cartItems: [
@@ -37,19 +28,17 @@ exports.addProductsToCart = asyncHandler(async (req, res, next) => {
       ],
     });
   } else {
-    // ✅ تحقق إذا كان المنتج موجود بنفس اللون
+    // Check if product exists
     const productIndex = cart.cartItems.findIndex(
       (item) =>
-        item.product._id.toString() === productId &&
+        item.product.toString() === productId &&
         item.color === color &&
         item.size === size,
     );
 
     if (productIndex > -1) {
-      // ✅ إذا موجود، زد الكمية
       cart.cartItems[productIndex].quantity += 1;
     } else {
-      // ✅ إذا مش موجود، أضفه
       cart.cartItems.push({
         product: productId,
         color,
@@ -60,30 +49,40 @@ exports.addProductsToCart = asyncHandler(async (req, res, next) => {
     }
   }
 
+  // Calculate total
   await calcTotalCartPrice(cart);
+
+  // Populate cart before sending
+  cart = await Cart.findById(cart._id).populate({
+    path: "cartItems.product",
+    select: "name image discountedPrice ratingsAverage brand category",
+    populate: [
+      { path: "brand", select: "name -_id" },
+      { path: "category", select: "name -_id" },
+    ],
+  });
 
   res.status(200).json({
     status: "success",
-    message: "Products Added to cart successfully",
-    numOfCartItems: cart.cartItems.length,
+    message: "Products added to cart successfully",
+    numberOfCartItem: cart.cartItems.length,
     data: cart,
   });
 });
 
+// ==================== Get Logged User Cart ====================
 exports.getLoggedUserCart = asyncHandler(async (req, res, next) => {
   const cart = await Cart.findOne({ user: req.user._id }).populate({
     path: "cartItems.product",
     select: "name image ratingsAverage brand category discountedPrice",
     populate: [
-      { path: "brand", select: "name -_id", model: "Brand" },
-      { path: "category", select: "name -_id", model: "Category" },
+      { path: "brand", select: "name -_id" },
+      { path: "category", select: "name -_id" },
     ],
   });
-  if (!cart) {
-    return next(
-      new ApiError(`There is no cart for this user is : ${req.user._id}`, 404),
-    );
-  }
+
+  if (!cart)
+    return next(new ApiError(`No cart found for user: ${req.user._id}`, 404));
 
   res.status(200).json({
     status: "success",
@@ -92,88 +91,78 @@ exports.getLoggedUserCart = asyncHandler(async (req, res, next) => {
   });
 });
 
-// @desc      Remove product from cart
-// @route     DELETE /api/v1/cart/:itemId
-// @access    Private/User
+// ==================== Remove Product from Cart ====================
 exports.removeCartProduct = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
-  const cart = await Cart.findOneAndUpdate(
+
+  let cart = await Cart.findOneAndUpdate(
     { user: req.user._id },
-    {
-      $pull: { cartItems: { _id: itemId } },
-    },
+    { $pull: { cartItems: { _id: itemId } } },
     { new: true },
-  ).populate({
+  );
+
+  if (!cart)
+    return next(new ApiError(`No cart found for user: ${req.user._id}`, 404));
+
+  await calcTotalCartPrice(cart);
+
+  cart = await Cart.findById(cart._id).populate({
     path: "cartItems.product",
     select: "name image ratingsAverage brand category discountedPrice",
     populate: [
-      { path: "brand", select: "name -_id", model: "Brand" },
-      { path: "category", select: "name -_id", model: "Category" },
+      { path: "brand", select: "name -_id" },
+      { path: "category", select: "name -_id" },
     ],
   });
-  await calcTotalCartPrice(cart);
 
-  return res.status(200).json({
+  res.status(200).json({
     status: "success",
-    numOfCartItems: cart.cartItems.length,
+    numberOfCartItem: cart.cartItems.length,
     data: cart,
   });
 });
 
-// @desc      Clear logged user cart
-// @route     DELETE /api/v1/cart
-// @access    Private/User
+// ==================== Clear Cart ====================
 exports.clearLoggedUserCart = asyncHandler(async (req, res, next) => {
   await Cart.findOneAndDelete({ user: req.user._id });
-
-  res
-    .status(204)
-    .json({ status: "success", message: "Delete All product fro cart" });
+  res.status(204).json({
+    status: "success",
+    message: "All products removed from cart",
+  });
 });
 
-// @desc      Update product quantity
-// @route     Put /api/v1/cart/:itemId
-// @access    Private/User
+// ==================== Update Cart Product Quantity ====================
 exports.updateCartProductCount = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
   const { quantity } = req.body;
-  // 1) Check if there is cart for logged user
-  const cart = await Cart.findOne({ user: req.user._id })
-    .populate({
-      path: "cartItems.product",
-      select: "name image ratingsAverage brand category ",
-      populate: { path: "brand", select: "name -_id", model: "Brand" },
-    })
-    .populate({
-      path: "cartItems.product",
-      select: "name image ratingsAverage brand category",
-      populate: { path: "category", select: "name -_id", model: "Category" },
-    });
-  if (!cart) {
-    return next(
-      new ApiError(`No cart exist for this user: ${req.user._id}`, 404),
-    );
-  }
+
+  let cart = await Cart.findOne({ user: req.user._id });
+  if (!cart)
+    return next(new ApiError(`No cart found for user: ${req.user._id}`, 404));
 
   const itemIndex = cart.cartItems.findIndex(
     (item) => item._id.toString() === itemId,
   );
 
-  if (itemIndex > -1) {
-    const productItem = cart.cartItems[itemIndex];
-    productItem.quantity = quantity;
-    cart.cartItems[itemIndex] = productItem;
-  } else {
-    return next(
-      new ApiError(`No Product Cart item found for this id: ${itemId}`),
-    );
-  }
-  // Calculate total cart price
+  if (itemIndex === -1)
+    return next(new ApiError(`No cart item found with id: ${itemId}`));
+
+  cart.cartItems[itemIndex].quantity = quantity;
+
   await calcTotalCartPrice(cart);
 
-  return res.status(200).json({
+  cart = await Cart.findById(cart._id).populate({
+    path: "cartItems.product",
+    select: "name image ratingsAverage brand category discountedPrice",
+    populate: [
+      { path: "brand", select: "name -_id" },
+      { path: "category", select: "name -_id" },
+    ],
+  });
+
+  res.status(200).json({
     status: "success",
-    numOfCartItems: cart.cartItems.length,
+    numberOfCartItem: cart.cartItems.length,
     data: cart,
   });
 });
