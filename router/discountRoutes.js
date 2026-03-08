@@ -19,6 +19,20 @@ const {
 
 const { protect, allowedTo } = require("../services/authServices");
 
+
+/**
+ * @desc    Apply coupon to logged user cart
+ * @route   PUT /api/v1/discount/applyCoupon
+ * @access  Private (User)
+ */
+router.put(
+  "/applyCoupon",
+  protect,
+  allowedTo("user", "admin"),
+  applyCouponValidator,
+  applyCouponToCart,
+);
+
 /**
  * @desc    Create new discount / coupon
  * @route   POST /api/v1/discount
@@ -71,16 +85,5 @@ router.delete(
   DeleteDiscountValidation,
   deleteDiscound,
 );
-/**
- * @desc    Apply coupon to logged user cart
- * @route   PUT /api/v1/discount/applyCoupon
- * @access  Private (User)
- */
-router.put(
-  "/applyCoupon",
-  protect,
-  allowedTo("user", "admin"),
-  applyCouponValidator,
-  applyCouponToCart,
-);
+
 module.exports = router;
