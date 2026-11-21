@@ -8,14 +8,55 @@ const {
   getOne,
   getLoggedUserData,
   changePassword,
+  getAdminAccounts,
+  createAdminAccount,
+  updateAdminAccount,
+  setAdminAccountStatus,
+  deleteAdminAccount,
 } = require("../services/userServices");
 
 const {
   updateLoggedUserValidation,
   changeValidateUserPassword,
+  createAdminAccountValidation,
+  updateAdminAccountValidation,
+  setAdminAccountStatusValidation,
+  deleteAdminAccountValidation,
 } = require("../utils/validator/userValidation");
 
 const { protect, allowedTo } = require("../services/authServices");
+const { passwordChangeLimiter } = require("../middlewares/rateLimiters");
+
+router
+  .route("/admin/accounts")
+  .get(protect, allowedTo("admin"), getAdminAccounts)
+  .post(
+    protect,
+    allowedTo("admin"),
+    createAdminAccountValidation,
+    createAdminAccount,
+  );
+router.put(
+  "/admin/accounts/:id",
+  protect,
+  allowedTo("admin"),
+  updateAdminAccountValidation,
+  updateAdminAccount,
+);
+router.patch(
+  "/admin/accounts/:id/status",
+  protect,
+  allowedTo("admin"),
+  setAdminAccountStatusValidation,
+  setAdminAccountStatus,
+);
+router.delete(
+  "/admin/accounts/:id",
+  protect,
+  allowedTo("admin"),
+  deleteAdminAccountValidation,
+  deleteAdminAccount,
+);
 
 /**
  * @desc    Update logged-in user info
@@ -46,6 +87,7 @@ router.get("/getMe", protect, getLoggedUserData, getOne);
 router.put(
   "/changePassword/:id",
   protect,
+  passwordChangeLimiter,
   changeValidateUserPassword,
   changePassword,
 );

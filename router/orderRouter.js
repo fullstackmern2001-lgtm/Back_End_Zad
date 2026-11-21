@@ -2,31 +2,34 @@ const express = require("express");
 const router = express.Router();
 
 const {
-  createCashOrder,
   getAllOrder,
   getOrder,
   filterOrderForLoggedUser,
   updateOrderDelivered,
-  updateOrderPaid,
   checkoutSession,
 } = require("../services/orderServices");
 
 const authServces = require("../services/authServices");
+const {
+  checkoutLimiter,
+} = require("../middlewares/rateLimiters");
 
 // checkout stripe
+router.post(
+  "/checkout-session/:cartId",
+  authServces.protect,
+  authServces.allowedTo("user"),
+  checkoutLimiter,
+  checkoutSession,
+);
+
+// Backward compatibility for already-deployed frontend clients.
 router.get(
   "/checkout-session/:cartId",
   authServces.protect,
   authServces.allowedTo("user"),
+  checkoutLimiter,
   checkoutSession,
-);
-
-// create order
-router.post(
-  "/:cartId",
-  authServces.protect,
-  authServces.allowedTo("user"),
-  createCashOrder,
 );
 
 // get orders (user + admin)
@@ -47,14 +50,6 @@ router.get(
 );
 
 // ================= ADMIN =================
-
-// update paid
-router.put(
-  "/:id/pay",
-  authServces.protect,
-  authServces.allowedTo("admin"),
-  updateOrderPaid,
-);
 
 // update delivered
 router.put(

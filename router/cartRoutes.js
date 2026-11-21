@@ -2,11 +2,11 @@ const express = require("express");
 const router = express.Router();
 
 const {
-  addProductsToCart,
+  addServiceToCart,
   getLoggedUserCart,
-  removeCartProduct,
+  removeCartService,
   clearLoggedUserCart,
-  updateCartProductCount,
+  updateCartServiceQuantity,
 } = require("../services/cartServices");
 
 const {
@@ -23,7 +23,7 @@ router.post(
   protect,
   allowedTo("user"),
   addToCartValidator,
-  addProductsToCart,
+  addServiceToCart,
 );
 
 // get cart
@@ -35,7 +35,7 @@ router.delete(
   protect,
   allowedTo("user"),
   removeCartItemValidator,
-  removeCartProduct,
+  removeCartService,
 );
 
 // clear cart
@@ -47,7 +47,7 @@ router.put(
   protect,
   allowedTo("user"),
   updateCartItemValidator,
-  updateCartProductCount,
+  updateCartServiceQuantity,
 );
 
 module.exports = router;

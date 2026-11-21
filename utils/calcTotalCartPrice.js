@@ -8,8 +8,6 @@ const calcTotalCartPrice = async (cart) => {
   });
 
   cart.totalCartPrice = totalPrice;
-  cart.totalPriceAfterDiscound = undefined;
-  cart.coupon = undefined;
   await cart.save();
   return totalPrice;
 };

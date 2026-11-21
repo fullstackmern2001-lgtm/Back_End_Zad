@@ -8,7 +8,7 @@ const sliderSchema = new mongoose.Schema(
       trim: true,
       unique: true,
       minlength: 2,
-      maxlength: 30,
+      maxlength: 100,
     },
     des: {
       type: String,

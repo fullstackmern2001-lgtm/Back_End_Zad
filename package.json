@@ -4,10 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test",
     "start:dev": "nodemon index.js",
     "start:prod": "NODE_ENV=production nodejs index.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "seed:dummy": "node scripts/dummyData.js"
   },
   "keywords": [],
   "author": "",

@@ -3,29 +3,15 @@ const asyncHandler = require("express-async-handler");
 const Factory = require("./handelFactor");
 const Slider = require("../models/sliderModel");
 const { uploadSingleImage } = require("../middlewares/uploadMiddleware");
-const cloudinary = require("../utils/cloudinary");
+const uploadImage = require("../utils/uploadToCloudinary");
 
 exports.uploadSliderSingleImage = uploadSingleImage("image");
 
 exports.resizeImage = asyncHandler(async (req, res, next) => {
-  if (req.file) {
-    const result = await cloudinary.uploader.upload_stream(
-      {
-        folder: "slider",
-      },
-      async (error, result) => {
-        if (error) {
-          return next(new Error("Image upload failed"));
-        }
-        req.body.image = result.secure_url;
-        next();
-      },
-    );
+  if (!req.file) return next();
 
-    result.end(req.file.buffer);
-  } else {
-    next();
-  }
+  req.body.image = await uploadImage(req.file.buffer, "slider");
+  next();
 });
 
 // @ desc Create Slider
@@ -36,7 +22,17 @@ exports.CreateSlider = Factory.createOne(Slider);
 // @desc GET Slider
 // @router Get /api/v1/slider
 // @access Public
-exports.getSliders = Factory.getAll(Slider);
+exports.getSliders = Factory.getAll(Slider, "", {
+  filterFields: {
+    name: { type: "string", maxLength: 30 },
+  },
+  searchFields: ["name"],
+  sortFields: ["name", "createdAt", "updatedAt"],
+  selectFields: ["name", "des", "image", "createdAt", "updatedAt"],
+  defaultLimit: 50,
+  maxLimit: 50,
+  maxPage: 10000,
+});
 
 // desc Get Specific Slider by id
 // @router Get /api/v1/slider/sliderId

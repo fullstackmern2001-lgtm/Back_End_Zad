@@ -2,34 +2,33 @@ const { check } = require("express-validator");
 const validMiddleware = require("../../middlewares/validMiddleware");
 
 const Review = require("../../models/reviewModel");
-const Product = require("../../models/productModel");
+const Service = require("../../models/serviceModel");
 
 // ✅ CREATE REVIEW
 exports.CreateValidateReview = [
   check("rating")
     .notEmpty()
-    .withMessage("Rating value required")
+    .withMessage("التقييم مطلوب")
     .isFloat({ min: 1, max: 5 })
-    .withMessage("Rating must be between 1 and 5"),
+    .withMessage("يجب أن يكون التقييم بين 1 و5"),
 
-  check("product")
+  check("service")
     .isMongoId()
-    .withMessage("Invalid Product ID")
+    .withMessage("معرف الخدمة غير صالح")
+    .bail()
     .custom(async (val, { req }) => {
-      // 1️⃣ تأكد المنتج موجود
-      const product = await Product.findById(val);
-      if (!product) {
-        throw new Error("Product not found");
+      const service = await Service.findById(val);
+      if (!service) {
+        throw new Error("الخدمة غير موجودة");
       }
 
-      // 2️⃣ تأكد المستخدم ما عمل review قبل
       const review = await Review.findOne({
         user: req.user._id,
-        product: val,
+        service: val,
       });
 
       if (review) {
-        throw new Error("You already reviewed this product");
+        throw new Error("لقد قيّمت هذه الخدمة مسبقًا");
       }
 
       return true;
@@ -40,7 +39,7 @@ exports.CreateValidateReview = [
 
 // ✅ GET REVIEW
 exports.GetValidateReview = [
-  check("id").isMongoId().withMessage("Invalid Review ID"),
+  check("id").isMongoId().withMessage("معرف التقييم غير صالح"),
   validMiddleware,
 ];
 
@@ -48,22 +47,34 @@ exports.GetValidateReview = [
 exports.UpdateValidateReview = [
   check("id")
     .isMongoId()
-    .withMessage("Invalid Review ID")
+    .withMessage("معرف التقييم غير صالح")
+    .bail()
     .custom(async (val, { req }) => {
       const review = await Review.findById(val);
 
       if (!review) {
-        throw new Error(`No review found with id ${val}`);
+        throw new Error("التقييم غير موجود");
       }
-      console.log("review user:", review.user.toString());
-      console.log("logged user:", req.user._id.toString());
       // تأكد انه صاحب الريفيو
-      if (review.user._id.toString() !== req.user._id.toString()) {
-        throw new Error("You are not allowed to perform this action");
+      if (
+        String(review.user?._id || review.user) !== String(req.user._id)
+      ) {
+        throw new Error("ليس لديك صلاحية تنفيذ هذا الإجراء");
       }
 
       return true;
     }),
+  check("rating")
+    .optional()
+    .isFloat({ min: 1, max: 5 })
+    .withMessage("يجب أن يكون التقييم بين 1 و5"),
+  check("title")
+    .optional()
+    .isString()
+    .withMessage("التعليق يجب أن يكون نصًا")
+    .bail()
+    .isLength({ max: 1000 })
+    .withMessage("التعليق طويل جدًا"),
 
   validMiddleware,
 ];
@@ -72,18 +83,21 @@ exports.UpdateValidateReview = [
 exports.DeleteValidateReview = [
   check("id")
     .isMongoId()
-    .withMessage("Invalid Review ID")
+    .withMessage("معرف التقييم غير صالح")
+    .bail()
     .custom(async (val, { req }) => {
       const review = await Review.findById(val);
 
       if (!review) {
-        throw new Error("Review not found");
+        throw new Error("التقييم غير موجود");
       }
 
       // لو user عادي
       if (req.user.role === "user") {
-        if (review.user._id.toString() !== req.user._id.toString()) {
-          throw new Error("You are not allowed to delete this review");
+        if (
+          String(review.user?._id || review.user) !== String(req.user._id)
+        ) {
+          throw new Error("ليس لديك صلاحية حذف هذا التقييم");
         }
       }
 

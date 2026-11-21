@@ -1,10 +1,10 @@
-// @desc this is class is responsible
 class ApiError extends Error {
   constructor(message, statusCode) {
-    super(message)
-    this.statusCode = statusCode
-    this.status = `${statusCode}`.startsWith(4) ? 'file' : 'error'
-    this.isOperational = true
+    super(message);
+    this.name = "ApiError";
+    this.statusCode = statusCode;
+    this.status = `${statusCode}`.startsWith("4") ? "fail" : "error";
+    this.isOperational = true;
   }
 }
 

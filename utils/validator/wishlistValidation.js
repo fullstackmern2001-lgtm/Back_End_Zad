@@ -2,20 +2,20 @@ const { check } = require("express-validator");
 const mongoose = require("mongoose");
 
 const validMiddleware = require("../../middlewares/validMiddleware");
-const Product = require("../../models/productModel");
+const Service = require("../../models/serviceModel");
 
 exports.addToWishlistValidator = [
-  check("productId")
+  check("serviceId")
     .notEmpty()
-    .withMessage("Product ID is required")
+    .withMessage("معرف الخدمة مطلوب")
 
     .custom((value) => mongoose.Types.ObjectId.isValid(value))
-    .withMessage("Invalid Product ID")
+    .withMessage("معرف الخدمة غير صالح")
 
     .custom(async (value) => {
-      const product = await Product.findById(value);
-      if (!product) {
-        throw new Error("Product not found");
+      const service = await Service.findById(value);
+      if (!service) {
+        throw new Error("الخدمة غير موجودة");
       }
       return true;
     }),
@@ -24,12 +24,12 @@ exports.addToWishlistValidator = [
 ];
 
 exports.removeFromWishlistValidator = [
-  check("productId")
+  check("serviceId")
     .notEmpty()
-    .withMessage("Product ID is required")
+    .withMessage("معرف الخدمة مطلوب")
 
     .custom((value) => mongoose.Types.ObjectId.isValid(value))
-    .withMessage("Invalid Product ID"),
+    .withMessage("معرف الخدمة غير صالح"),
 
   validMiddleware,
 ];

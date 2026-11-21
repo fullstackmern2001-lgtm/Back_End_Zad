@@ -8,61 +8,69 @@ const orderSchema = new Schema(
       ref: "User",
       required: [true, "User Required"],
     },
+    stripeSessionId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      select: false,
+    },
+    checkoutAttempt: {
+      type: mongoose.Schema.ObjectId,
+      ref: "CheckoutAttempt",
+      unique: true,
+      sparse: true,
+    },
     cartItems: [
       {
-        product: {
+        service: {
           type: mongoose.Schema.ObjectId,
-          ref: "Product",
+          ref: "Service",
+          required: true,
         },
-        quantity: Number,
-        color: String,
-        price: Number,
-        size: {
-          type: String,
-          enum: ["صغير", "متوسط", "كبير", "كبير جدًا"],
-        },
+        serviceName: { type: String, required: true },
+        serviceImage: { type: String, default: "" },
+        price: { type: Number, required: true, min: 0 },
+        minQuantity: { type: Number, required: true, min: 1 },
+        quantity: { type: Number, required: true, min: 1 },
+        totalItemPrice: { type: Number, required: true, min: 0 },
       },
     ],
-    taxPrise: {
-      // الضريبه
-      type: Number,
-      default: 0,
-    },
-    shoppingPrice: {
-      // مصاريف الشحن
-      type: Number,
-      default: 0,
-    },
     totalOrderPrice: {
       type: Number,
+      required: true,
+      min: 0,
     },
-    shippingAddress: {
-      details: String,
-      city: String,
-      phone: String,
-      postalCode: String,
+    totalAmountMinor: {
+      type: Number,
+      min: 0,
+    },
+    currency: {
+      type: String,
+      lowercase: true,
+      enum: ["usd"],
     },
     paymentMethodType: {
       type: String,
-      enum: ["card", "cash"],
-      default: "cash",
+      enum: ["card", "legacy"],
+      default: "card",
     },
     isPaid: {
-      // هل تم الدفع او لا
       type: Boolean,
       default: false,
     },
     paidAt: {
-      // وقت الدفع
       type: Date,
     },
     isDelivered: {
-      // هل هوا وصل ام لا لما يكون كاش
       type: Boolean,
       default: false,
     },
-    // وقت الدفع وقت الكاش
     deliveredAt: Date,
+    status: {
+      type: String,
+      enum: ["pending", "paid", "failed"],
+      default: "pending",
+    },
   },
   { timestamps: true },
 );
@@ -71,7 +79,7 @@ orderSchema.pre(/^find/, function (next) {
   this.populate({
     path: "user",
     select: "firstName lastName email phone avatar",
-  }).populate({ path: "cartItems.product", select: "name image" });
+  }).populate({ path: "cartItems.service", select: "name image" });
   next();
 });
 const orderModel = mongoose.model("Order", orderSchema);

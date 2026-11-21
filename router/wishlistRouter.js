@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 
 const {
-  addToWishList,
   removeFromWishlist,
   getWishlist,
   toggleWishlist,
@@ -23,19 +22,19 @@ const { protect } = require("../services/authServices");
 router.get("/", protect, getWishlist);
 
 /**
- * @desc    Add product to wishlist
+ * @desc    Toggle a service in the wishlist
  * @route   POST /api/v1/wishlist
  * @access  Private/User
  */
-router.post("/", protect, toggleWishlist);
+router.post("/", protect, addToWishlistValidator, toggleWishlist);
 
 /**
- * @desc    Remove product from wishlist
- * @route   DELETE /api/v1/wishlist/:productId
+ * @desc    Remove service from wishlist
+ * @route   DELETE /api/v1/wishlist/:serviceId
  * @access  Private/User
  */
 router.delete(
-  "/:productId",
+  "/:serviceId",
   protect,
   removeFromWishlistValidator,
   removeFromWishlist,

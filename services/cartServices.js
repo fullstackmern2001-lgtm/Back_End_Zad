@@ -1,70 +1,78 @@
 const asyncHandler = require("express-async-handler");
 const Cart = require("../models/cartModel");
-const Product = require("../models/productModel");
+const Service = require("../models/serviceModel");
 const ApiError = require("../utils/ApiError");
 const calcTotalCartPrice = require("../utils/calcTotalCartPrice");
 
-// ==================== Add Product to Cart ====================
-exports.addProductsToCart = asyncHandler(async (req, res, next) => {
-  const { productId, color, size } = req.body;
+// ==================== Add Service to Cart ====================
+exports.addServiceToCart = asyncHandler(async (req, res, next) => {
+  const { serviceId, quantity = 1 } = req.body;
+  const parsedQuantity = Number(quantity);
 
-  const product = await Product.findById(productId);
-  if (!product) return next(new ApiError("Product not found", 404));
+  const service = await Service.findById(serviceId);
+  if (!service) return next(new ApiError("الخدمة غير موجودة", 404));
+
+  const minimumQuantity = Math.max(
+    1,
+    Math.ceil(Number(service.minQuantity ?? 1)),
+  );
+  const requestedQuantity = Number.isFinite(parsedQuantity)
+    ? parsedQuantity
+    : minimumQuantity;
+
+  if (
+    !Number.isInteger(requestedQuantity) ||
+    requestedQuantity < minimumQuantity
+  ) {
+    return next(
+      new ApiError(
+        `الحد الأدنى للتبرع لهذه الخدمة هو ${minimumQuantity} قطعة`,
+        400,
+      ),
+    );
+  }
+
+  const itemPrice = Number(service.price);
 
   let cart = await Cart.findOne({ user: req.user._id });
-
+  const existingItem = cart?.cartItems.find(
+    (item) => item.service.toString() === serviceId,
+  );
   if (!cart) {
-    // Create new cart
     cart = await Cart.create({
       user: req.user._id,
       cartItems: [
         {
-          product: productId,
-          color,
-          size,
-          price: product.discountedPrice,
-          quantity: 1,
+          service: serviceId,
+          quantity: requestedQuantity,
+          price: itemPrice,
         },
       ],
     });
   } else {
-    // Check if product exists
-    const productIndex = cart.cartItems.findIndex(
-      (item) =>
-        item.product.toString() === productId &&
-        item.color === color &&
-        item.size === size,
-    );
-
-    if (productIndex > -1) {
-      cart.cartItems[productIndex].quantity += 1;
+    if (existingItem) {
+      existingItem.quantity += requestedQuantity;
+      existingItem.price = itemPrice;
     } else {
       cart.cartItems.push({
-        product: productId,
-        color,
-        size,
-        price: product.discountedPrice,
-        quantity: 1,
+        service: serviceId,
+        quantity: requestedQuantity,
+        price: itemPrice,
       });
     }
+    cart.revision = (cart.revision || 0) + 1;
   }
 
-  // Calculate total
   await calcTotalCartPrice(cart);
 
-  // Populate cart before sending
   cart = await Cart.findById(cart._id).populate({
-    path: "cartItems.product",
-    select: "name image discountedPrice ratingsAverage brand category",
-    populate: [
-      { path: "brand", select: "name -_id" },
-      { path: "category", select: "name -_id" },
-    ],
+    path: "cartItems.service",
+    select: "name description image price minQuantity",
   });
 
   res.status(200).json({
     status: "success",
-    message: "Products added to cart successfully",
+    message: "Service added to cart successfully",
     numberOfCartItem: cart.cartItems.length,
     data: cart,
   });
@@ -72,17 +80,28 @@ exports.addProductsToCart = asyncHandler(async (req, res, next) => {
 
 // ==================== Get Logged User Cart ====================
 exports.getLoggedUserCart = asyncHandler(async (req, res, next) => {
-  const cart = await Cart.findOne({ user: req.user._id }).populate({
-    path: "cartItems.product",
-    select: "name image ratingsAverage brand category discountedPrice",
-    populate: [
-      { path: "brand", select: "name -_id" },
-      { path: "category", select: "name -_id" },
-    ],
+  let cart = await Cart.findOne({ user: req.user._id }).populate({
+    path: "cartItems.service",
+    select: "name description image price minQuantity",
   });
 
-  if (!cart)
-    return next(new ApiError(`No cart found for user: ${req.user._id}`, 404));
+  if (!cart) {
+    return res.status(200).json({
+      status: "success",
+      numberOfCartItem: 0,
+      data: {
+        cartItems: [],
+        totalCartPrice: 0,
+      },
+    });
+  }
+
+  const validCartItems = cart.cartItems.filter((item) => item.service);
+  if (validCartItems.length !== cart.cartItems.length) {
+    cart.cartItems = validCartItems;
+    cart.revision = (cart.revision || 0) + 1;
+    await calcTotalCartPrice(cart);
+  }
 
   res.status(200).json({
     status: "success",
@@ -91,8 +110,8 @@ exports.getLoggedUserCart = asyncHandler(async (req, res, next) => {
   });
 });
 
-// ==================== Remove Product from Cart ====================
-exports.removeCartProduct = asyncHandler(async (req, res, next) => {
+// ==================== Remove Service from Cart ====================
+exports.removeCartService = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
 
   let cart = await Cart.findOneAndUpdate(
@@ -101,18 +120,14 @@ exports.removeCartProduct = asyncHandler(async (req, res, next) => {
     { new: true },
   );
 
-  if (!cart)
-    return next(new ApiError(`No cart found for user: ${req.user._id}`, 404));
+  if (!cart) return next(new ApiError("لا توجد سلة لهذا المستخدم", 404));
 
+  cart.revision = (cart.revision || 0) + 1;
   await calcTotalCartPrice(cart);
 
   cart = await Cart.findById(cart._id).populate({
-    path: "cartItems.product",
-    select: "name image ratingsAverage brand category discountedPrice",
-    populate: [
-      { path: "brand", select: "name -_id" },
-      { path: "category", select: "name -_id" },
-    ],
+    path: "cartItems.service",
+    select: "name description image price minQuantity",
   });
 
   res.status(200).json({
@@ -127,37 +142,49 @@ exports.clearLoggedUserCart = asyncHandler(async (req, res, next) => {
   await Cart.findOneAndDelete({ user: req.user._id });
   res.status(204).json({
     status: "success",
-    message: "All products removed from cart",
+    message: "All services removed from cart",
   });
 });
 
 // ==================== Update Cart Product Quantity ====================
-exports.updateCartProductCount = asyncHandler(async (req, res, next) => {
+exports.updateCartServiceQuantity = asyncHandler(async (req, res, next) => {
   const { itemId } = req.params;
   const { quantity } = req.body;
 
   let cart = await Cart.findOne({ user: req.user._id });
-  if (!cart)
-    return next(new ApiError(`No cart found for user: ${req.user._id}`, 404));
+  if (!cart) return next(new ApiError("لا توجد سلة لهذا المستخدم", 404));
 
   const itemIndex = cart.cartItems.findIndex(
     (item) => item._id.toString() === itemId,
   );
 
   if (itemIndex === -1)
-    return next(new ApiError(`No cart item found with id: ${itemId}`));
+    return next(new ApiError("عنصر السلة المطلوب غير موجود", 404));
 
-  cart.cartItems[itemIndex].quantity = quantity;
+  const cartItem = cart.cartItems[itemIndex];
+  const service = await Service.findById(cartItem.service).select("minQuantity price");
+  if (!service) return next(new ApiError("الخدمة غير موجودة", 404));
+  const minQuantity = Math.max(1, Math.ceil(Number(service.minQuantity ?? 1)));
+  const requestedQuantity = Number(quantity);
+
+  if (!Number.isInteger(requestedQuantity) || requestedQuantity < minQuantity) {
+    return next(
+      new ApiError(
+        `الحد الأدنى للتبرع لهذه الخدمة هو ${minQuantity} قطعة`,
+        400,
+      ),
+    );
+  }
+
+  cart.cartItems[itemIndex].quantity = requestedQuantity;
+  cart.cartItems[itemIndex].price = Number(service.price);
+  cart.revision = (cart.revision || 0) + 1;
 
   await calcTotalCartPrice(cart);
 
   cart = await Cart.findById(cart._id).populate({
-    path: "cartItems.product",
-    select: "name image ratingsAverage brand category discountedPrice",
-    populate: [
-      { path: "brand", select: "name -_id" },
-      { path: "category", select: "name -_id" },
-    ],
+    path: "cartItems.service",
+    select: "name description image price minQuantity",
   });
 
   res.status(200).json({

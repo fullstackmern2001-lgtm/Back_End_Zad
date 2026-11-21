@@ -4,12 +4,6 @@ const ApiFeatures = require("../utils/ApiFeatures");
 
 exports.createOne = (Model) =>
   asyncHandler(async (req, res) => {
-    if (req.body.sizes && typeof req.body.sizes === "string") {
-      req.body.sizes = JSON.parse(req.body.sizes);
-    }
-    if (req.body.extras && typeof req.body.extras === "string") {
-      req.body.extras = JSON.parse(req.body.extras);
-    }
     const newDoc = await Model.create(req.body);
     res.status(201).json({ data: newDoc });
   });
@@ -27,20 +21,27 @@ exports.getOne = (Model, populationOpt) =>
     const document = await query;
 
     if (!document) {
-      return next(new ApiError(`No document for this id ${id}`, 404));
+      return next(new ApiError("العنصر المطلوب غير موجود", 404));
     }
     res.status(200).json({ data: document });
   });
 
-exports.getAll = (Model, modelName = "") =>
+exports.getAll = (Model, modelName = "", queryOptions) =>
   asyncHandler(async (req, res) => {
     let filter = {};
     if (req.filterObj) {
       filter = req.filterObj;
     }
+    const apiFeatures = new ApiFeatures(
+      Model.find(filter),
+      req.query,
+      queryOptions,
+    );
+    if (queryOptions) apiFeatures.validateQueryParams();
+
     // Build query
     const documentsCounts = await Model.countDocuments();
-    const apiFeatures = new ApiFeatures(Model.find(filter), req.query)
+    apiFeatures
       .paginate(documentsCounts)
       .filter()
       .search(modelName)
@@ -59,10 +60,11 @@ exports.updateOne = (Model) =>
   asyncHandler(async (req, res, next) => {
     const document = await Model.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
+      runValidators: true,
     });
     if (!document) {
       return next(
-        new ApiError(`No document for this id ${req.params.id}`, 404),
+        new ApiError("العنصر المطلوب غير موجود", 404),
       );
     }
     // Trigger "save" event when update document
@@ -75,7 +77,7 @@ exports.deleteOne = (Model) =>
     const document = await Model.findByIdAndDelete(id);
 
     if (!document) {
-      return next(new ApiError(`No document for this id ${id}`, 404));
+      return next(new ApiError("العنصر المطلوب غير موجود", 404));
     }
     // Trigger "remove" event when remove document
     document.deleteOne();

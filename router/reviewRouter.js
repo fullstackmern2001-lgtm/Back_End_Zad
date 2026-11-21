@@ -1,5 +1,5 @@
 const express = require("express");
-const router = express.Router({ mergeParams: true }); // mergeParams عشان productId يجي من route
+const router = express.Router({ mergeParams: true });
 
 const {
   getReviews,
@@ -7,8 +7,10 @@ const {
   getReview,
   updateReview,
   deleteReview,
-  setProductId,
+  setServiceId,
   createFilterObj,
+  getServiceReviews,
+  getAllReviewsForAdmin,
 } = require("../services/reviewServices");
 
 const {
@@ -21,20 +23,21 @@ const {
 const { protect, allowedTo } = require("../services/authServices");
 
 /**
- * @desc    Get all reviews (optionally filtered by product)
+ * @desc    Get reviews, optionally filtered by service
  * @route   GET /api/v1/review
- * @access  Private (user)
+ * @access  Public
  */
+router.get("/home", getServiceReviews);
 router.get(
-  "/",
+  "/admin",
   protect,
-  allowedTo("user", "admin"),
-  createFilterObj,
-  getReviews,
+  allowedTo("admin"),
+  getAllReviewsForAdmin,
 );
+router.get("/", createFilterObj, getReviews);
 
 /**
- * @desc    Create a review for a product
+ * @desc    Create a service review
  * @route   POST /api/v1/review
  * @access  Private (user)
  */
@@ -42,7 +45,7 @@ router.post(
   "/",
   protect,
   allowedTo("user", "admin"),
-  setProductId,
+  setServiceId,
   CreateValidateReview,
   createReview,
 );

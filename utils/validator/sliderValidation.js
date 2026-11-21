@@ -9,15 +9,18 @@ exports.CreateSliderValidation = [
   check("name")
     .trim()
     .notEmpty()
-    .withMessage("Please enter slider name")
+    .withMessage("الرجاء إدخال اسم السلايدر")
+    .bail()
     .isLength({ min: 2, max: 30 })
-    .withMessage("Slider name must be between 2 and 30 characters")
+    .withMessage("اسم السلايدر يجب أن يكون بين حرفين و30 حرفًا")
+    .bail()
     .isString()
-    .withMessage("Slider name must be a string")
+    .withMessage("اسم السلايدر يجب أن يكون نصًا")
+    .bail()
     .custom(async (val) => {
       const slider = await Slider.findOne({ name: val });
       if (slider) {
-        return Promise.reject(new Error("Slider name already exists"));
+        return Promise.reject(new Error("اسم السلايدر موجود مسبقًا"));
       }
     }),
 
@@ -25,16 +28,18 @@ exports.CreateSliderValidation = [
     .optional()
     .trim()
     .isString()
-    .withMessage("Description must be a string"),
+    .withMessage("وصف السلايدر يجب أن يكون نصًا"),
 
   check("image")
     .trim()
     .notEmpty()
-    .withMessage("Please enter slider image")
+    .withMessage("الرجاء إضافة صورة السلايدر")
+    .bail()
     .isString()
-    .withMessage("Image must be a string")
+    .withMessage("بيانات صورة السلايدر غير صالحة")
+    .bail()
     .isURL()
-    .withMessage("Image must be a valid URL"),
+    .withMessage("رابط صورة السلايدر غير صالح"),
 
   validMiddleware,
 ];
@@ -43,7 +48,7 @@ exports.CreateSliderValidation = [
    Get Slider Validation
 ========================= */
 exports.GetSliderValidation = [
-  check("id").isMongoId().withMessage("Invalid slider id format"),
+  check("id").isMongoId().withMessage("معرف السلايدر غير صالح"),
   validMiddleware,
 ];
 
@@ -51,24 +56,27 @@ exports.GetSliderValidation = [
    Update Slider Validation
 ========================= */
 exports.UpdateSliderValidation = [
-  check("id").isMongoId().withMessage("Invalid slider id format"),
+  check("id").isMongoId().withMessage("معرف السلايدر غير صالح"),
 
   check("name")
     .optional()
     .trim()
     .notEmpty()
-    .withMessage("Slider name cannot be empty")
+    .withMessage("اسم السلايدر لا يمكن أن يكون فارغًا")
+    .bail()
     .isLength({ min: 2, max: 30 })
-    .withMessage("Slider name must be between 2 and 30 characters")
+    .withMessage("اسم السلايدر يجب أن يكون بين حرفين و30 حرفًا")
+    .bail()
     .isString()
-    .withMessage("Slider name must be a string")
+    .withMessage("اسم السلايدر يجب أن يكون نصًا")
+    .bail()
     .custom(async (val, { req }) => {
       const slider = await Slider.findOne({
         name: val,
         _id: { $ne: req.params.id },
       });
       if (slider) {
-        return Promise.reject(new Error("Slider name already exists"));
+        return Promise.reject(new Error("اسم السلايدر موجود مسبقًا"));
       }
     }),
 
@@ -76,17 +84,19 @@ exports.UpdateSliderValidation = [
     .optional()
     .trim()
     .isString()
-    .withMessage("Description must be a string"),
+    .withMessage("وصف السلايدر يجب أن يكون نصًا"),
 
   check("image")
     .optional()
     .trim()
     .notEmpty()
-    .withMessage("Image cannot be empty")
+    .withMessage("صورة السلايدر لا يمكن أن تكون فارغة")
+    .bail()
     .isString()
-    .withMessage("Image must be a string")
+    .withMessage("بيانات صورة السلايدر غير صالحة")
+    .bail()
     .isURL()
-    .withMessage("Image must be a valid URL"),
+    .withMessage("رابط صورة السلايدر غير صالح"),
 
   validMiddleware,
 ];
@@ -95,6 +105,6 @@ exports.UpdateSliderValidation = [
    Delete Slider Validation
 ========================= */
 exports.DeleteSliderValidation = [
-  check("id").isMongoId().withMessage("Invalid slider id format"),
+  check("id").isMongoId().withMessage("معرف السلايدر غير صالح"),
   validMiddleware,
 ];

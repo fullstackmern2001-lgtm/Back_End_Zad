@@ -1,58 +1,37 @@
 const { check } = require("express-validator");
 const validatorMiddleware = require("../../middlewares/validMiddleware");
-const Product = require("../../models/productModel");
+const Service = require("../../models/serviceModel");
 
 exports.addToCartValidator = [
-  check("productId")
+  check("serviceId")
     .notEmpty()
-    .withMessage("Product id is required")
+    .withMessage("معرف الخدمة مطلوب")
+    .bail()
     .isMongoId()
-    .withMessage("Invalid product id")
+    .withMessage("معرف الخدمة غير صالح")
+    .bail()
     .custom(async (val, { req }) => {
-      const product = await Product.findById(val);
-      if (!product) {
-        throw new Error("Product not found");
+      const service = await Service.findById(val);
+      if (!service) {
+        throw new Error("الخدمة غير موجودة");
       }
-      req.product = product;
+      req.service = service;
       return true;
     }),
-
-  check("color")
-    .notEmpty()
-    .withMessage("Color is required")
-    .custom((color, { req }) => {
-      if (!req.product.colors.includes(color)) {
-        throw new Error("Color not available for this product");
-      }
-      return true;
-    }),
-
-  check("size")
-    .notEmpty()
-    .withMessage("Size is required")
-    .custom((size, { req }) => {
-      if (!req.product.sizes.includes(size)) {
-        throw new Error("Size not available for this product");
-      }
-      return true;
-    }),
-
   validatorMiddleware,
 ];
 
 exports.updateCartItemValidator = [
-  check("itemId").isMongoId().withMessage("Invalid cart item id"),
+  check("itemId").isMongoId().withMessage("معرف الخدمة في السلة غير صالح"),
   check("quantity")
     .notEmpty()
-    .withMessage("Quantity is required")
+    .withMessage("الكمية مطلوبة")
     .isInt({ min: 1 })
-    .withMessage("Quantity must be greater than 0"),
+    .withMessage("يجب أن تكون الكمية أكبر من صفر"),
   validatorMiddleware,
 ];
 
 exports.removeCartItemValidator = [
-  check("itemId").isMongoId().withMessage("Invalid cart item id"),
+  check("itemId").isMongoId().withMessage("معرف الخدمة في السلة غير صالح"),
   validatorMiddleware,
 ];
-
-

@@ -35,8 +35,8 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
       required: true,
-      minlength: 6,
-      select: false, // مهم جدًا للأمان
+      minlength: 10,
+      select: false,
     },
 
     role: {
@@ -54,20 +54,40 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    addresses: [
-      {
-        alias: { type: String, required: true },
-        details: { type: String, required: true },
-        phone: { type: String, required: true },
-        city: { type: String, required: true },
-        postCode: { type: String },
-        _id: { type: mongoose.Schema.Types.ObjectId, auto: true },
-      },
-    ],
+    tokenVersion: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+    passwordResetCodeHash: {
+      type: String,
+      select: false,
+    },
+    passwordResetExpires: {
+      type: Date,
+      select: false,
+    },
+    passwordResetAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+    passwordResetRequestedAt: {
+      type: Date,
+      select: false,
+    },
+    passwordResetGrantHash: {
+      type: String,
+      select: false,
+    },
+    passwordResetGrantExpires: {
+      type: Date,
+      select: false,
+    },
     wishlist: [
       {
         type: mongoose.Schema.ObjectId,
-        ref: "Product",
+        ref: "Service",
       },
     ],
   },

@@ -5,26 +5,30 @@ const CartSchema = new Schema(
   {
     cartItems: [
       {
-        product: {
+        service: {
           type: mongoose.Schema.ObjectId,
-          ref: "Product",
+          ref: "Service",
+          required: true,
         },
-        quantity: Number,
-        color: String,
-        price: Number,
-        size: {
-          type: String,
-          enum: ["صغير", "متوسط", "كبير", "كبير جدًا"],
+        quantity: {
+          type: Number,
+          required: true,
+          min: 1,
+        },
+        price: {
+          type: Number,
+          required: true,
+          min: 0,
         },
       },
     ],
 
-    totalCartPrice: Number,
-    totalPriceAfterDiscound: Number,
-    coupon: String,
+    totalCartPrice: { type: Number, default: 0, min: 0 },
+    revision: { type: Number, default: 0, min: 0 },
     user: {
       type: mongoose.Schema.ObjectId,
       ref: "User",
+      required: true,
     },
   },
   { timestamps: true },

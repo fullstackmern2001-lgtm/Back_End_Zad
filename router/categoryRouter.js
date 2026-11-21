@@ -3,78 +3,49 @@ const router = express.Router();
 
 const {
   uploadCategorySingleImage,
-  resizeImage,
-  CreateCategory,
-  getCategores,
-  GetCategory,
-  UpdateCategory,
+  resizeCategoryImage,
+  getCategories,
+  getCategory,
+  createCategory,
+  updateCategory,
   deleteCategory,
 } = require("../services/categoryServices");
-
 const {
   CreateCategoryValidation,
   GetCategoryValidation,
   UpdateCategoryValidation,
   DeleteCategoryValidation,
-} = require("../utils/validator/categoryValidations");
-
+} = require("../utils/validator/categoryValidation");
 const { protect, allowedTo } = require("../services/authServices");
 
-/**
- * @desc    Create new category
- * @route   POST /api/v1/category
- * @access  Private (Admin)
- */
-router.post(
-  "/",
-  protect,
-  allowedTo("admin"),
-  uploadCategorySingleImage,
-  resizeImage,
-  CreateCategoryValidation,
-  CreateCategory,
-);
+router
+  .route("/")
+  .get(getCategories)
+  .post(
+    protect,
+    allowedTo("admin"),
+    uploadCategorySingleImage,
+    resizeCategoryImage,
+    CreateCategoryValidation,
+    createCategory,
+  );
 
-/**
- * @desc    Get all categories
- * @route   GET /api/v1/category
- * @access  Public
- */
-router.get("/", getCategores);
-
-/**
- * @desc    Get specific category
- * @route   GET /api/v1/category/:id
- * @access  Public
- */
-router.get("/:id", GetCategoryValidation, GetCategory);
-
-/**
- * @desc    Update category
- * @route   PUT /api/v1/category/:id
- * @access  Private (Admin)
- */
-router.put(
-  "/:id",
-  protect,
-  allowedTo("admin"),
-  uploadCategorySingleImage,
-  resizeImage,
-  UpdateCategoryValidation,
-  UpdateCategory,
-);
-
-/**
- * @desc    Delete category
- * @route   DELETE /api/v1/category/:id
- * @access  Private (Admin)
- */
-router.delete(
-  "/:id",
-  protect,
-  allowedTo("admin"),
-  DeleteCategoryValidation,
-  deleteCategory,
-);
+router
+  .route("/:id")
+  .get(GetCategoryValidation, getCategory)
+  .put(
+    protect,
+    allowedTo("admin"),
+    uploadCategorySingleImage,
+    resizeCategoryImage,
+    UpdateCategoryValidation,
+    updateCategory,
+  )
+  .delete(
+    protect,
+    allowedTo("admin"),
+    DeleteCategoryValidation,
+    deleteCategory,
+  );
 
 module.exports = router;
