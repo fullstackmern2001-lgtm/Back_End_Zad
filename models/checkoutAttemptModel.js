@@ -44,12 +44,27 @@ const checkoutAttemptSchema = new mongoose.Schema(
       lowercase: true,
       enum: ["usd"],
     },
+    paymentMethodType: {
+      type: String,
+      enum: ["card", "paypal"],
+      default: "card",
+    },
     subtotalAmountMinor: { type: Number, required: true, min: 0 },
     discountAmountMinor: { type: Number, required: true, default: 0, min: 0 },
     taxAmountMinor: { type: Number, required: true, default: 0, min: 0 },
     shippingAmountMinor: { type: Number, required: true, default: 0, min: 0 },
     totalAmountMinor: { type: Number, required: true, min: 0 },
     stripeSessionId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    paypalOrderId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+    paypalCaptureId: {
       type: String,
       unique: true,
       sparse: true,

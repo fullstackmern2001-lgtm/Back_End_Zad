@@ -1,7 +1,11 @@
 const asyncHandler = require("express-async-handler");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
-const stripe = require("stripe")(process.env.SECRER_KEY);
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+if (!stripeSecretKey?.trim()) {
+  throw new Error("STRIPE_SECRET_KEY must be configured.");
+}
+const stripe = require("stripe")(stripeSecretKey);
 
 const ApiError = require("../utils/ApiError");
 const ApiFeatures = require("../utils/ApiFeatures");
@@ -9,18 +13,28 @@ const Order = require("../models/orderModel");
 const Cart = require("../models/cartModel");
 const CheckoutAttempt = require("../models/checkoutAttemptModel");
 const calcTotalCartPrice = require("../utils/calcTotalCartPrice");
+const { validateCheckoutAttemptRequest } = require("../utils/checkoutAttempt");
 const {
   toMinorUnits,
   toMajorUnits,
   buildStripeLineItems,
   validateCheckoutSession,
+  getStripeCheckoutStatus,
 } = require("../utils/stripeCheckout");
+const { getPayPalConfig } = require("../utils/paypalConfig");
+const {
+  createPayPalOrder,
+  capturePayPalOrder,
+  validatePayPalCapture,
+  verifyPayPalWebhook,
+  validatePayPalWebhookCapture,
+} = require("../utils/paypalCheckout");
 
 const orderListQueryOptions = {
   filterFields: {
     user: { type: "objectId" },
     status: { type: "enum", values: ["pending", "paid", "failed"] },
-    paymentMethodType: { type: "enum", values: ["card"] },
+    paymentMethodType: { type: "enum", values: ["card", "paypal"] },
     isPaid: { type: "boolean" },
     isDelivered: { type: "boolean" },
     totalOrderPrice: {
@@ -194,40 +208,57 @@ const getSnapshotItems = (cart) => {
 };
 
 const getAttemptForCheckout = async (attempt, req) => {
-  if (attempt.cartId.toString() !== req.params.cartId) {
-    throw new ApiError("مفتاح الدفع مستخدم لمحاولة أخرى", 409);
-  }
+  validateCheckoutAttemptRequest(attempt, {
+    cartId: req.params.cartId,
+    paymentMethod:
+      req.method === "GET" ? undefined : req.body?.paymentMethod || "card",
+  });
   if (attempt.status === "open" && attempt.checkoutUrl) {
     if (attempt.expiresAt && attempt.expiresAt <= new Date()) {
-      const currentSession = await stripe.checkout.sessions.retrieve(
-        attempt.stripeSessionId,
-      );
-      validateCheckoutSession(currentSession, attempt);
+      if (attempt.paymentMethodType === "card" && attempt.stripeSessionId) {
+        const currentSession = await stripe.checkout.sessions.retrieve(
+          attempt.stripeSessionId,
+        );
+        validateCheckoutSession(currentSession, attempt);
 
-      if (
-        currentSession.status === "complete" &&
-        currentSession.payment_status === "paid"
-      ) {
-        await createPaidOrder(currentSession);
-        return {
-          id: currentSession.id,
-          url: `${getClientBaseUrl()}/dashpord/orders`,
-        };
+        if (
+          currentSession.status === "complete" &&
+          currentSession.payment_status === "paid"
+        ) {
+          await createPaidOrder(currentSession);
+          return {
+            id: currentSession.id,
+            url: `${getClientBaseUrl()}/dashpord/orders`,
+          };
+        }
+
+        if (currentSession.status === "expired") {
+          await markAttemptTerminal(currentSession, null, "expired");
+          throw new ApiError("انتهت صلاحية جلسة الدفع؛ أعد المحاولة", 409);
+        }
+
+        throw new ApiError(
+          "جلسة الدفع قيد المعالجة؛ انتظر تأكيد Stripe قبل إعادة المحاولة",
+          409,
+        );
       }
-
-      if (currentSession.status === "expired") {
-        await markAttemptTerminal(currentSession, null, "expired");
-        throw new ApiError("انتهت صلاحية جلسة الدفع؛ أعد المحاولة", 409);
+      if (attempt.paymentMethodType === "paypal") {
+        attempt.status = "expired";
+        attempt.isActive = false;
+        await attempt.save();
+        throw new ApiError("انتهت صلاحية جلسة دفع PayPal؛ أعد المحاولة", 409);
       }
-
-      throw new ApiError(
-        "جلسة الدفع قيد المعالجة؛ انتظر تأكيد Stripe قبل إعادة المحاولة",
-        409,
-      );
+      attempt.status = "expired";
+      attempt.isActive = false;
+      await attempt.save();
+      throw new ApiError("انتهت صلاحية جلسة الدفع؛ أعد المحاولة", 409);
     }
 
     return {
-      id: attempt.stripeSessionId,
+      id:
+        attempt.paymentMethodType === "paypal"
+          ? attempt.paypalOrderId || attempt._id.toString()
+          : attempt.stripeSessionId,
       url: attempt.checkoutUrl,
     };
   }
@@ -236,20 +267,37 @@ const getAttemptForCheckout = async (attempt, req) => {
   }
 
   const clientBaseUrl = getClientBaseUrl();
-  const expiresAt = Math.floor(Date.now() / 1000) + 60 * 60;
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+  if (attempt.paymentMethodType === "paypal") {
+    const paypalConfig = getPayPalConfig();
+    const { orderId, approvalUrl } = await createPayPalOrder({
+      attempt,
+      config: paypalConfig,
+    });
+    attempt.paypalOrderId = orderId;
+    attempt.checkoutUrl = approvalUrl;
+    attempt.expiresAt = expiresAt;
+    attempt.status = "open";
+    attempt.isActive = true;
+    await attempt.save();
+    return { id: orderId, url: approvalUrl };
+  }
+
+  const stripeExpiresAt = Math.floor(expiresAt.getTime() / 1000);
   const session = await stripe.checkout.sessions.create(
     {
       mode: "payment",
       payment_method_types: ["card"],
       line_items: buildStripeLineItems(attempt.cartItems, attempt.currency),
-      success_url: `${clientBaseUrl}/dashpord/orders`,
-      cancel_url: `${clientBaseUrl}/cart`,
+      success_url: `${clientBaseUrl}/dashpord/orders?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${clientBaseUrl}/cart?payment=cancelled`,
       customer_email: req.user.email,
       client_reference_id: attempt._id.toString(),
       metadata: {
         checkoutAttemptId: attempt._id.toString(),
       },
-      expires_at: expiresAt,
+      expires_at: stripeExpiresAt,
     },
     { idempotencyKey: `checkout-attempt-${attempt._id}` },
   );
@@ -322,6 +370,11 @@ exports.checkoutSession = asyncHandler(async (req, res) => {
     throw new ApiError("معرف السلة غير صالح", 400);
   }
 
+  const paymentMethod = req.body?.paymentMethod || "card";
+  if (!["card", "paypal"].includes(paymentMethod)) {
+    throw new ApiError("وسيلة الدفع المحددة غير مدعومة", 400);
+  }
+
   let attempt = await CheckoutAttempt.findOne({
     user: req.user._id,
     idempotencyKey,
@@ -370,6 +423,7 @@ exports.checkoutSession = asyncHandler(async (req, res) => {
     cartId: cart._id,
     cartRevision: cart.revision || 0,
     idempotencyKey,
+    paymentMethodType: paymentMethod,
     cartItems,
     currency: "usd",
     subtotalAmountMinor,
@@ -386,17 +440,37 @@ exports.checkoutSession = asyncHandler(async (req, res) => {
   } catch (error) {
     if (error.code !== 11000) throw error;
 
-    attempt =
-      (await CheckoutAttempt.findOne({
-        user: req.user._id,
-        idempotencyKey,
-      })) ||
-      (await CheckoutAttempt.findOne({
+    attempt = await CheckoutAttempt.findOne({
+      user: req.user._id,
+      idempotencyKey,
+    });
+    if (!attempt) {
+      const activeAttempt = await CheckoutAttempt.findOne({
         user: req.user._id,
         cartId: cart._id,
         cartRevision: cart.revision || 0,
         isActive: true,
-      }));
+      });
+
+      if (
+        activeAttempt &&
+        activeAttempt.paymentMethodType !== paymentMethod &&
+        activeAttempt.status === "open"
+      ) {
+        await CheckoutAttempt.updateOne(
+          {
+            _id: activeAttempt._id,
+            status: "open",
+            isActive: true,
+            paymentMethodType: { $ne: paymentMethod },
+          },
+          { $set: { status: "expired", isActive: false } },
+        );
+        attempt = await CheckoutAttempt.create(attemptData);
+      } else {
+        attempt = activeAttempt;
+      }
+    }
     if (!attempt) throw error;
   }
 
@@ -404,12 +478,45 @@ exports.checkoutSession = asyncHandler(async (req, res) => {
   res.status(200).json({ status: "success", session });
 });
 
+exports.getStripeCheckoutStatus = asyncHandler(async (req, res) => {
+  const attempt = await CheckoutAttempt.findOne({
+    stripeSessionId: req.params.sessionId,
+    user: req.user._id,
+    paymentMethodType: "card",
+  });
+  if (!attempt) {
+    throw new ApiError("جلسة الدفع المطلوبة غير موجودة", 404);
+  }
+
+  const session = await stripe.checkout.sessions.retrieve(
+    attempt.stripeSessionId,
+  );
+  validateCheckoutSession(session, attempt);
+
+  if (session.payment_status === "paid") {
+    await createPaidOrder(session);
+  } else if (session.status === "expired") {
+    await markAttemptTerminal(session, null, "expired");
+  }
+
+  const latestAttempt = await CheckoutAttempt.findById(attempt._id)
+    .select("status order")
+    .lean();
+  if (!latestAttempt) {
+    throw new ApiError("محاولة الدفع المرتبطة بالجلسة غير موجودة", 404);
+  }
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      paymentStatus: getStripeCheckoutStatus(session, latestAttempt.status),
+    },
+  });
+});
+
 const findAttemptForSession = async (session) => {
   const attemptId = session.metadata?.checkoutAttemptId;
-  if (
-    !mongoose.isValidObjectId(attemptId) ||
-    session.client_reference_id !== attemptId
-  ) {
+  if (!mongoose.isValidObjectId(attemptId)) {
     throw new ApiError("جلسة Stripe لا تحتوي مرجع محاولة صالحًا", 400);
   }
 
@@ -461,82 +568,98 @@ const clearCartIfUnchanged = async (attempt) => {
   });
 };
 
+const executeOrderCreation = async (attempt, session, eventId, dbSession = null) => {
+  const sessionOpt = dbSession ? { session: dbSession } : {};
+
+  const existingOrderQuery = Order.findOne({
+    checkoutAttempt: attempt._id,
+  }).select("_id");
+  const existingOrder = dbSession
+    ? await existingOrderQuery.session(dbSession).lean()
+    : await existingOrderQuery.lean();
+  if (existingOrder) {
+    const update = {
+      $set: {
+        status: "paid",
+        isActive: false,
+        order: existingOrder._id,
+        paidAt: attempt.paidAt || new Date(),
+      },
+    };
+    if (eventId) update.$addToSet = { processedEventIds: eventId };
+    await CheckoutAttempt.updateOne(
+      { _id: attempt._id },
+      update,
+      sessionOpt,
+    );
+    return;
+  }
+
+  const currentAttempt = dbSession
+    ? await CheckoutAttempt.findById(attempt._id).session(dbSession)
+    : await CheckoutAttempt.findById(attempt._id);
+
+  if (!currentAttempt) {
+    throw new ApiError("محاولة الدفع المرتبطة بالجلسة غير موجودة", 404);
+  }
+  validateCheckoutSession(session, currentAttempt);
+
+  const [order] = await Order.create(
+    [
+      {
+        stripeSessionId: session.id,
+        checkoutAttempt: currentAttempt._id,
+        user: currentAttempt.user,
+        cartItems: currentAttempt.cartItems.map((item) => ({
+          service: item.service,
+          serviceName: item.serviceName,
+          serviceImage: item.serviceImage,
+          price: item.price,
+          minQuantity: item.minQuantity,
+          quantity: item.quantity,
+          totalItemPrice: item.totalItemPrice,
+        })),
+        totalOrderPrice: toMajorUnits(currentAttempt.totalAmountMinor),
+        totalAmountMinor: currentAttempt.totalAmountMinor,
+        currency: currentAttempt.currency,
+        isPaid: true,
+        paidAt: new Date(),
+        paymentMethodType: currentAttempt.paymentMethodType || "card",
+        status: "paid",
+      },
+    ],
+    sessionOpt,
+  );
+
+  currentAttempt.status = "paid";
+  currentAttempt.isActive = false;
+  currentAttempt.order = order._id;
+  currentAttempt.paidAt = new Date();
+  if (eventId) currentAttempt.processedEventIds.addToSet(eventId);
+  await currentAttempt.save(sessionOpt);
+};
+
 const createPaidOrder = async (session, eventId) => {
   if (session.payment_status !== "paid") {
     throw new ApiError("Stripe لم يؤكد اكتمال الدفع", 400);
   }
   const attempt = await findAttemptForSession(session);
-  const dbSession = await mongoose.startSession();
+  let dbSession = null;
 
   try {
+    dbSession = await mongoose.startSession();
     await dbSession.withTransaction(async () => {
-      const existingOrder = await Order.findOne({
-        checkoutAttempt: attempt._id,
-      })
-        .select("_id")
-        .session(dbSession)
-        .lean();
-      if (existingOrder) {
-        const update = {
-          $set: {
-            status: "paid",
-            isActive: false,
-            order: existingOrder._id,
-            paidAt: attempt.paidAt || new Date(),
-          },
-        };
-        if (eventId) update.$addToSet = { processedEventIds: eventId };
-        await CheckoutAttempt.updateOne(
-          { _id: attempt._id },
-          update,
-          { session: dbSession },
-        );
-        return;
-      }
-
-      const currentAttempt = await CheckoutAttempt.findById(attempt._id)
-        .session(dbSession);
-      if (!currentAttempt) {
-        throw new ApiError("محاولة الدفع المرتبطة بالجلسة غير موجودة", 404);
-      }
-      validateCheckoutSession(session, currentAttempt);
-
-      const [order] = await Order.create(
-        [
-          {
-            stripeSessionId: session.id,
-            checkoutAttempt: currentAttempt._id,
-            user: currentAttempt.user,
-            cartItems: currentAttempt.cartItems.map((item) => ({
-              service: item.service,
-              serviceName: item.serviceName,
-              serviceImage: item.serviceImage,
-              price: item.price,
-              minQuantity: item.minQuantity,
-              quantity: item.quantity,
-              totalItemPrice: item.totalItemPrice,
-            })),
-            totalOrderPrice: toMajorUnits(currentAttempt.totalAmountMinor),
-            totalAmountMinor: currentAttempt.totalAmountMinor,
-            currency: currentAttempt.currency,
-            isPaid: true,
-            paidAt: new Date(),
-            paymentMethodType: "card",
-            status: "paid",
-          },
-        ],
-        { session: dbSession },
-      );
-
-      currentAttempt.status = "paid";
-      currentAttempt.isActive = false;
-      currentAttempt.order = order._id;
-      currentAttempt.paidAt = new Date();
-      if (eventId) currentAttempt.processedEventIds.addToSet(eventId);
-      await currentAttempt.save({ session: dbSession });
+      await executeOrderCreation(attempt, session, eventId, dbSession);
     });
   } catch (error) {
-    if (error.code !== 11000) throw error;
+    if (
+      error?.message?.includes("replica set") ||
+      error?.message?.includes("Transaction numbers")
+    ) {
+      await executeOrderCreation(attempt, session, eventId, null);
+    } else if (error.code !== 11000) {
+      throw error;
+    }
     const existingOrder = await Order.findOne({
       checkoutAttempt: attempt._id,
     })
@@ -544,7 +667,9 @@ const createPaidOrder = async (session, eventId) => {
       .lean();
     if (!existingOrder) throw error;
   } finally {
-    await dbSession.endSession();
+    if (dbSession) {
+      await dbSession.endSession();
+    }
   }
 
   await clearCartIfUnchanged(attempt);
@@ -562,13 +687,17 @@ const markAttemptTerminal = async (session, eventId, status) => {
 
 exports.webhookCheckout = asyncHandler(async (req, res) => {
   const sig = req.headers["stripe-signature"];
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!webhookSecret) {
+    throw new ApiError("إعداد توقيع Stripe غير مهيأ", 500);
+  }
   let event;
 
   try {
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      process.env.STRIPE_WEBHOOK_SECRET,
+      webhookSecret,
     );
   } catch (err) {
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -594,4 +723,262 @@ exports.webhookCheckout = asyncHandler(async (req, res) => {
   }
 
   res.status(200).json({ received: true });
+});
+
+const createPaidOrderForPayPal = async (attempt, captureId, eventId) => {
+  let dbSession = null;
+
+  const executePayPalOrder = async (activeDbSession) => {
+    const sessionOpt = activeDbSession ? { session: activeDbSession } : {};
+    const existingOrderQuery = Order.findOne({
+      checkoutAttempt: attempt._id,
+    }).select("_id");
+    const existingOrder = activeDbSession
+      ? await existingOrderQuery.session(activeDbSession).lean()
+      : await existingOrderQuery.lean();
+    if (existingOrder) {
+      await CheckoutAttempt.updateOne(
+        { _id: attempt._id },
+        {
+          $set: {
+            status: "paid",
+            isActive: false,
+            order: existingOrder._id,
+            paidAt: attempt.paidAt || new Date(),
+            paypalCaptureId: captureId,
+          },
+          ...(eventId
+            ? { $addToSet: { processedEventIds: eventId } }
+            : {}),
+        },
+        sessionOpt,
+      );
+      return existingOrder;
+    }
+
+    const currentAttempt = activeDbSession
+      ? await CheckoutAttempt.findById(attempt._id).session(activeDbSession)
+      : await CheckoutAttempt.findById(attempt._id);
+    if (!currentAttempt) {
+      throw new ApiError("محاولة دفع PayPal غير موجودة", 404);
+    }
+
+    const [order] = await Order.create(
+      [
+        {
+          paypalOrderId: currentAttempt.paypalOrderId,
+          checkoutAttempt: currentAttempt._id,
+          user: currentAttempt.user,
+          cartItems: currentAttempt.cartItems.map((item) => ({
+            service: item.service,
+            serviceName: item.serviceName,
+            serviceImage: item.serviceImage,
+            price: item.price,
+            minQuantity: item.minQuantity,
+            quantity: item.quantity,
+            totalItemPrice: item.totalItemPrice,
+          })),
+          totalOrderPrice: toMajorUnits(currentAttempt.totalAmountMinor),
+          totalAmountMinor: currentAttempt.totalAmountMinor,
+          currency: currentAttempt.currency,
+          isPaid: true,
+          paidAt: new Date(),
+          paymentMethodType: "paypal",
+          status: "paid",
+        },
+      ],
+      sessionOpt,
+    );
+
+    currentAttempt.status = "paid";
+    currentAttempt.isActive = false;
+    currentAttempt.order = order._id;
+    currentAttempt.paypalCaptureId = captureId;
+    currentAttempt.paidAt = new Date();
+    if (eventId) currentAttempt.processedEventIds.addToSet(eventId);
+    await currentAttempt.save(sessionOpt);
+    return order;
+  };
+
+  try {
+    dbSession = await mongoose.startSession();
+    await dbSession.withTransaction(async () => {
+      await executePayPalOrder(dbSession);
+    });
+  } catch (error) {
+    if (
+      error?.message?.includes("replica set") ||
+      error?.message?.includes("Transaction numbers")
+    ) {
+      await executePayPalOrder(null);
+    } else if (error.code !== 11000) {
+      throw error;
+    }
+    const existingOrder = await Order.findOne({
+      checkoutAttempt: attempt._id,
+    })
+      .select("_id")
+      .lean();
+    if (!existingOrder) throw error;
+  } finally {
+    if (dbSession) await dbSession.endSession();
+  }
+
+  await clearCartIfUnchanged(attempt);
+};
+
+exports.createPaidOrderForPayPal = createPaidOrderForPayPal;
+
+exports.capturePayPalCheckout = asyncHandler(async (req, res) => {
+  const orderId =
+    req.params.paypalOrderId || req.body?.paypalOrderId || req.query?.token;
+  if (!orderId || !/^[A-Za-z0-9_-]{1,128}$/.test(orderId)) {
+    throw new ApiError("معرف أمر PayPal غير صالح", 400);
+  }
+
+  const attempt = await CheckoutAttempt.findOne({
+    paypalOrderId: orderId,
+    user: req.user._id,
+    paymentMethodType: "paypal",
+  });
+  if (!attempt) {
+    throw new ApiError("محاولة PayPal المطلوبة غير موجودة", 404);
+  }
+
+  if (attempt.status === "paid") {
+    return res.status(200).json({
+      status: "success",
+      data: { paymentStatus: "paid" },
+    });
+  }
+  if (!["open", "creating_session"].includes(attempt.status)) {
+    throw new ApiError("محاولة PayPal لم تعد قابلة للدفع", 409);
+  }
+
+  const capture = await capturePayPalOrder({
+    orderId,
+    config: getPayPalConfig(),
+  });
+  if (
+    ["VOIDED", "DENIED", "DECLINED", "FAILED", "EXPIRED", "CANCELED"].includes(
+      String(capture?.status || "").toUpperCase(),
+    )
+  ) {
+    attempt.status = "failed";
+    attempt.isActive = false;
+    await attempt.save();
+    return res.status(200).json({
+      status: "success",
+      data: { paymentStatus: "failed" },
+    });
+  }
+  const captureId = validatePayPalCapture(capture, attempt);
+  await createPaidOrderForPayPal(attempt, captureId, captureId);
+
+  res.status(200).json({
+    status: "success",
+    data: { paymentStatus: "paid", captureId },
+  });
+});
+
+exports.cancelPayPalCheckout = asyncHandler(async (req, res) => {
+  const orderId =
+    req.params.paypalOrderId || req.body?.paypalOrderId || req.query?.token;
+  if (!orderId || !/^[A-Za-z0-9_-]{1,128}$/.test(orderId)) {
+    throw new ApiError("معرف أمر PayPal غير صالح", 400);
+  }
+
+  const attempt = await CheckoutAttempt.findOne({
+    paypalOrderId: orderId,
+    user: req.user._id,
+    paymentMethodType: "paypal",
+  });
+  if (!attempt) {
+    throw new ApiError("محاولة PayPal المطلوبة غير موجودة", 404);
+  }
+
+  if (attempt.status !== "paid") {
+    attempt.status = "failed";
+    attempt.isActive = false;
+    await attempt.save();
+  }
+
+  res.status(200).json({
+    status: "success",
+    data: { paymentStatus: "failed" },
+  });
+});
+
+exports.paypalWebhook = asyncHandler(async (req, res) => {
+  const config = getPayPalConfig();
+  const isValid = await verifyPayPalWebhook({
+    config,
+    headers: req.headers,
+    body: req.body,
+  });
+  if (!isValid) {
+    throw new ApiError("توقيع إشعار PayPal غير صالح", 400);
+  }
+
+  const event = req.body;
+  const resource = event.resource || {};
+  const orderId =
+    resource.supplementary_data?.related_ids?.order_id ||
+    (typeof resource.invoice_id === "string"
+      ? resource.invoice_id.replace(/^ZAD-PAYPAL-/, "")
+      : undefined) ||
+    resource.custom_id;
+  const captureId =
+    resource.id ||
+    resource.capture_id ||
+    event.resource?.id;
+
+  const attemptFilters = [
+    ...(orderId
+      ? [
+          { paypalOrderId: orderId },
+          ...(mongoose.isValidObjectId(orderId)
+            ? [{ _id: orderId }]
+            : []),
+        ]
+      : []),
+    ...(captureId ? [{ paypalCaptureId: captureId }] : []),
+  ];
+  const attempt =
+    attemptFilters.length > 0
+      ? await CheckoutAttempt.findOne({
+          paymentMethodType: "paypal",
+          $or: attemptFilters,
+        })
+      : null;
+  if (!attempt) {
+    res.status(200).json({ received: true, status: "ignored" });
+    return;
+  }
+
+  if (
+    event.event_type === "PAYMENT.CAPTURE.COMPLETED" ||
+    event.event_type === "CHECKOUT.ORDER.APPROVED"
+  ) {
+    if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+      const verifiedCaptureId = validatePayPalWebhookCapture(resource, attempt);
+      await createPaidOrderForPayPal(
+        attempt,
+        verifiedCaptureId,
+        event.id,
+      );
+    }
+  } else if (
+    event.event_type === "PAYMENT.CAPTURE.DENIED" ||
+    event.event_type === "PAYMENT.CAPTURE.DECLINED"
+  ) {
+    const update = { $set: { status: "failed", isActive: false } };
+    if (event.id) update.$addToSet = { processedEventIds: event.id };
+    await CheckoutAttempt.updateOne(
+      { _id: attempt._id, status: { $ne: "paid" } },
+      update,
+    );
+  }
+
+  res.status(200).json({ received: true, status: "processed" });
 });

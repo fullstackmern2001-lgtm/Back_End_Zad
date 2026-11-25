@@ -14,6 +14,11 @@ const orderSchema = new Schema(
       sparse: true,
       select: false,
     },
+    paypalOrderId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
     checkoutAttempt: {
       type: mongoose.Schema.ObjectId,
       ref: "CheckoutAttempt",
@@ -51,7 +56,7 @@ const orderSchema = new Schema(
     },
     paymentMethodType: {
       type: String,
-      enum: ["card", "legacy"],
+      enum: ["card", "paypal", "legacy"],
       default: "card",
     },
     isPaid: {

@@ -37,6 +37,15 @@ const validateCheckoutSession = (session, attempt) => {
   if (!session?.id || !attempt) {
     throw new ApiError("بيانات جلسة الدفع غير مكتملة", 400);
   }
+  const attemptId = attempt._id?.toString();
+  if (
+    attempt.paymentMethodType !== "card" ||
+    !attemptId ||
+    session.client_reference_id !== attemptId ||
+    session.metadata?.checkoutAttemptId !== attemptId
+  ) {
+    throw new ApiError("جلسة Stripe لا تطابق محاولة الدفع", 400);
+  }
   if (attempt.stripeSessionId && attempt.stripeSessionId !== session.id) {
     throw new ApiError("جلسة Stripe لا تطابق محاولة الدفع", 400);
   }
@@ -50,9 +59,23 @@ const validateCheckoutSession = (session, attempt) => {
   }
 };
 
+const getStripeCheckoutStatus = (session, attemptStatus) => {
+  if (session.payment_status === "paid" || attemptStatus === "paid") {
+    return "paid";
+  }
+  if (session.status === "expired" || attemptStatus === "expired") {
+    return "expired";
+  }
+  if (attemptStatus === "failed") {
+    return "failed";
+  }
+  return "pending";
+};
+
 module.exports = {
   toMinorUnits,
   toMajorUnits,
   buildStripeLineItems,
   validateCheckoutSession,
+  getStripeCheckoutStatus,
 };

@@ -5,9 +5,11 @@ const {
   toMajorUnits,
   buildStripeLineItems,
   validateCheckoutSession,
+  getStripeCheckoutStatus,
 } = require("../utils/stripeCheckout");
 const CheckoutAttempt = require("../models/checkoutAttemptModel");
 const Order = require("../models/orderModel");
+const { validateCheckoutAttemptRequest } = require("../utils/checkoutAttempt");
 
 test("converts supported USD prices to integer cents", () => {
   assert.equal(toMinorUnits(12), 1200);
@@ -50,12 +52,16 @@ test("builds Stripe line items from the immutable snapshot", () => {
 
 test("accepts only a matching Stripe session, amount, and currency", () => {
   const attempt = {
+    _id: "attempt_123",
     stripeSessionId: "cs_test_123",
+    paymentMethodType: "card",
     totalAmountMinor: 2500,
     currency: "usd",
   };
   const session = {
     id: "cs_test_123",
+    client_reference_id: "attempt_123",
+    metadata: { checkoutAttemptId: "attempt_123" },
     mode: "payment",
     amount_total: 2500,
     currency: "usd",
@@ -85,6 +91,88 @@ test("accepts only a matching Stripe session, amount, and currency", () => {
         attempt,
       ),
     /لا تطابق محاولة الدفع/,
+  );
+  assert.throws(
+    () =>
+      validateCheckoutSession(
+        { ...session, client_reference_id: "attempt_other" },
+        attempt,
+      ),
+    /لا تطابق محاولة الدفع/,
+  );
+  assert.throws(
+    () =>
+      validateCheckoutSession(
+        { ...session, metadata: { checkoutAttemptId: "attempt_other" } },
+        attempt,
+      ),
+    /لا تطابق محاولة الدفع/,
+  );
+  assert.throws(
+    () =>
+      validateCheckoutSession(session, {
+        ...attempt,
+        paymentMethodType: "paypal",
+      }),
+    /لا تطابق محاولة الدفع/,
+  );
+});
+
+test("reuses a checkout attempt only for its cart and payment method", () => {
+  const attempt = {
+    cartId: { toString: () => "cart_123" },
+    paymentMethodType: "card",
+  };
+
+  assert.doesNotThrow(() =>
+    validateCheckoutAttemptRequest(attempt, {
+      cartId: "cart_123",
+      paymentMethod: "card",
+    }),
+  );
+  assert.throws(
+    () =>
+      validateCheckoutAttemptRequest(attempt, {
+        cartId: "cart_456",
+        paymentMethod: "card",
+      }),
+    /مفتاح الدفع مستخدم لمحاولة أخرى/,
+  );
+  assert.throws(
+    () =>
+      validateCheckoutAttemptRequest(attempt, {
+        cartId: "cart_123",
+        paymentMethod: "paypal",
+      }),
+    /مرتبط بوسيلة دفع أخرى/,
+  );
+});
+
+test("maps Stripe checkout returns to authoritative payment states", () => {
+  assert.equal(
+    getStripeCheckoutStatus(
+      { status: "complete", payment_status: "paid" },
+      "open",
+    ),
+    "paid",
+  );
+  assert.equal(
+    getStripeCheckoutStatus(
+      { status: "complete", payment_status: "unpaid" },
+      "open",
+    ),
+    "pending",
+  );
+  assert.equal(
+    getStripeCheckoutStatus(
+      { status: "complete", payment_status: "unpaid" },
+      "failed",
+    ),
+    "failed",
+  );
+  assert.equal(
+    getStripeCheckoutStatus({ status: "expired", payment_status: "unpaid" }, "open"),
+    "expired",
   );
 });
 
@@ -126,4 +214,15 @@ test("declares database uniqueness for attempts and their orders", () => {
         options.sparse === true,
     ),
   );
+});
+
+test("allows PayPal in checkout attempt and order payment method enums", () => {
+  const attemptPaymentTypes =
+    CheckoutAttempt.schema.path("paymentMethodType").enumValues;
+  const orderPaymentTypes =
+    Order.schema.path("paymentMethodType").enumValues;
+
+  assert.ok(attemptPaymentTypes.includes("paypal"));
+  assert.ok(attemptPaymentTypes.includes("card"));
+  assert.ok(orderPaymentTypes.includes("paypal"));
 });

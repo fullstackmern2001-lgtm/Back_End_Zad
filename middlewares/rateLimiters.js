@@ -45,11 +45,18 @@ const createRateLimiter = (windowMs, limit, message, options = {}) =>
 
 const defaultWindowMs = 15 * 60 * 1000;
 
+const WEBHOOK_PATH_SEGMENTS = ["webhook-checkout", "paypal-webhook"];
+
 const apiSettings = getRateLimitSettings("API", defaultWindowMs, 300);
 exports.apiLimiter = createRateLimiter(
   apiSettings.windowMs,
   apiSettings.limit,
   "Too many requests. Please try again later.",
+  {
+    skip: (req) =>
+      req.method === "OPTIONS" ||
+      WEBHOOK_PATH_SEGMENTS.some((segment) => req.path.includes(segment)),
+  },
 );
 
 const loginSettings = getRateLimitSettings("LOGIN", defaultWindowMs, 10);

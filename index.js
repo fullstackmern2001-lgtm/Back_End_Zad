@@ -57,7 +57,7 @@ app.use(
       return callback(new ApiError("هذا النطاق غير مسموح بالاتصال بالخادم", 403));
     },
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
-    allowedHeaders: ["Authorization", "Content-Type"],
+    allowedHeaders: ["Authorization", "Content-Type", "Idempotency-Key"],
     credentials: false,
   }),
 );
@@ -66,9 +66,13 @@ app.use(
 app.use(compression());
 app.use("/api/v1", apiLimiter);
 
-// CheckOut WebHook
+// CheckOut WebHook (supports root and API routes with raw parser for signature verification)
 app.post(
-  "/webhook-checkout",
+  [
+    "/webhook-checkout",
+    "/api/v1/webhook-checkout",
+    "/api/v1/order/webhook-checkout",
+  ],
   express.raw({ type: "application/json" }),
   webhookCheckout,
 );

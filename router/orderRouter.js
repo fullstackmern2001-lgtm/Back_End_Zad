@@ -7,6 +7,10 @@ const {
   filterOrderForLoggedUser,
   updateOrderDelivered,
   checkoutSession,
+  getStripeCheckoutStatus,
+  capturePayPalCheckout,
+  cancelPayPalCheckout,
+  paypalWebhook,
 } = require("../services/orderServices");
 
 const authServces = require("../services/authServices");
@@ -23,6 +27,24 @@ router.post(
   checkoutSession,
 );
 
+router.post(
+  "/paypal/capture/:paypalOrderId",
+  authServces.protect,
+  authServces.allowedTo("user"),
+  checkoutLimiter,
+  capturePayPalCheckout,
+);
+
+router.post(
+  "/paypal/cancel/:paypalOrderId",
+  authServces.protect,
+  authServces.allowedTo("user"),
+  checkoutLimiter,
+  cancelPayPalCheckout,
+);
+
+router.post("/paypal-webhook", paypalWebhook);
+
 // Backward compatibility for already-deployed frontend clients.
 router.get(
   "/checkout-session/:cartId",
@@ -30,6 +52,14 @@ router.get(
   authServces.allowedTo("user"),
   checkoutLimiter,
   checkoutSession,
+);
+
+router.get(
+  "/checkout-session/:sessionId/status",
+  authServces.protect,
+  authServces.allowedTo("user"),
+  checkoutLimiter,
+  getStripeCheckoutStatus,
 );
 
 // get orders (user + admin)
